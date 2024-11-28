@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
-import fs from 'fs';
-import path from 'path';
+
 import * as dotenv from "dotenv";
 import erc20abi from '../abi/erc20abi.json';
 import l1bridgeAbi from '../abi/l1bridge-abi.json';
@@ -15,9 +14,6 @@ dotenv.config();
 // 4. withdraw MNT
 
 import { config } from './config'
-
-const transactionResponseFile = path.join(__dirname, '..', 'example', 'transaction_response.json');
-const transactionReceiptFile = path.join(__dirname, '..', 'example', 'transaction_receipt.json');
 
 const {
   ETHEREUM_RPC_URL,
@@ -34,13 +30,19 @@ const {
   l1BridgeAddress, l2BridgeAddress, ethereumChainId, mantleChainId
 } = conf;
 
-const l1l2TokenMapping = {
-  ethereumETHAddress: mantleETHAddress,
-  ethereumMNTAddress: mantleMNTAddress
+const l1l2TokenMapping: {[key: string]: string} = {
+  [ethereumETHAddress]: mantleETHAddress,
+  [ethereumMNTAddress]: mantleMNTAddress
 };
-const l2l1TokenMapping = {
-  mantleETHAddress: ethereumETHAddress,
-  mantleMNTAddress: ethereumMNTAddress
+const l2l1TokenMapping: {[key: string]: string} = {
+  [mantleETHAddress]: ethereumETHAddress,
+  [mantleMNTAddress]: ethereumMNTAddress
+}
+const tokenToSymbol: {[key: string]: string} = {
+  [ethereumETHAddress]: 'ETH',
+  [ethereumMNTAddress]: 'MNT',
+  [mantleETHAddress]: 'ETH',
+  [mantleMNTAddress]: 'MNT'
 }
 
 const providerEthereum = new ethers.providers.JsonRpcProvider(ETHEREUM_RPC_URL);
@@ -56,32 +58,32 @@ async function startDeposit(token: string, amount: ethers.BigNumber) {
   // console.log("Mantle Testnet Wallet Balance (MNT):", ethers.utils.formatEther(balanceMantle));
 
   const l2Contract = new ethers.Contract(l2BridgeAddress, l2bridgeAbi, walletMantle);
-  const filter = l2Contract.filters.DepositFinalized();
+  const ethDepositFilter = l2Contract.filters.DepositFinalized(ethereumETHAddress, null, SENDER_ADDRESS);
+  const mntDepositFilter = l2Contract.filters.DepositFinalized(ethereumMNTAddress, null, SENDER_ADDRESS);
 
   console.log("Listening for DepositFinalized events on the L2 Bridge...");
   // Listen for deposit finalized
-  l2Contract.on(filter, (l1Token, l2Token, from, to, amount, extraData) => {
-    console.log("Deposit Finalized Event:");
-    console.log(`l1Token: ${l1Token}, l1Token: ${l2Token}, from: ${from}, to: ${to},
+  l2Contract.on(ethDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
+    console.log("ETH deposit Finalized Event:");
+    console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
+      amount: ${ethers.utils.formatEther(ethers.BigNumber.from(amount))}, extraData: ${extraData}`);
+  });
+  l2Contract.on(mntDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
+    console.log("MNT deposit Finalized Event:");
+    console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
       amount: ${ethers.utils.formatEther(ethers.BigNumber.from(amount))}, extraData: ${extraData}`);
   });
 
-  // 15585867
-  // const events = await l2Contract.queryFilter(filter, 15585866, 15585868)
-  // console.log(events);
+  const isNative = token === ethereumETHAddress;
+  console.log(`Depositing ${ethers.utils.formatEther(amount)} ${tokenToSymbol[token]}, isNative: ${isNative}`)
 
   await reportBalance(walletEthereum, walletMantle);
 
   const l1Contract = new ethers.Contract(l1BridgeAddress, l1bridgeAbi, walletEthereum);
-  // 200000 may fail
   const minGasLimit = ethers.BigNumber.from(200000);
-  const gasEstimate = await l1Contract.estimateGas.depositETH(minGasLimit, '0x', {
-    value: amount,
-  })
-  const finalGasEstimate  = gasEstimate.mul(ethers.BigNumber.from(102)).div(ethers.BigNumber.from(100));
-  console.log(`gas estimate: ${gasEstimate}, final gas esimate: ${finalGasEstimate}`);;
-
-  await reportBalance(walletEthereum, walletMantle);
+  const extraData = '0x';
+  const gasEstimate = await estimateGas(l1Contract, token, amount, minGasLimit, extraData, isNative);
+  console.log(`gas estimate: ${gasEstimate}`);
 
   // send transaction manually
   // const l1BridgeInterface = new ethers.utils.Interface(l1bridgeAbi);
@@ -94,19 +96,57 @@ async function startDeposit(token: string, amount: ethers.BigNumber) {
   // };
   // const response = await walletEthereum.sendTransaction(tx);
 
-  // L1StandardBridgeProxy -> L1CrossDomainMessengerProxy -> OptimisePortalProxy
-  const response = await l1Contract.depositETH(gasEstimate, '0x', {
-    value: amount
-  })
-  console.log('transaction submitted');
+  // L1StandardBridgeProxy -> L1CrossDomainMessengerProxy -> OptimismPortalProxy
+  // L2CrossDomainMessenger
+  const response: ethers.providers.TransactionResponse = await doDeposit(l1Contract, token, amount, gasEstimate, extraData, isNative);
   console.log(response);
+  console.log(`transaction submitted, gas limit: ${response.gasLimit}`);
 
   const receipt = await response.wait();
-  console.log('transaction mined');
   console.log(receipt);
+  console.log(`transaction mined, status: ${receipt.status}, gas estimate: ${gasEstimate}, transaction gas limit: ${response.gasLimit}, gas used: ${receipt.gasUsed}`);
+
+  if (receipt.gasUsed.gt(response.gasLimit)) {
+    console.log('Gas limit too low');
+    return;
+  }
 
   await reportBalance(walletEthereum, walletMantle);
 }
+
+async function estimateGas(contract: ethers.Contract, token: string, amount: ethers.BigNumber,
+  minGasLimit: ethers.BigNumber, extraData: string, isNative: boolean
+) {
+  if (isNative) {
+    return contract.estimateGas.depositETH(minGasLimit, extraData, {
+      value: amount,
+    })
+  }
+  if (token === ethereumMNTAddress) {
+    return contract.estimateGas.depositMNT(amount, minGasLimit, extraData)
+  }
+  return contract.estimateGas.depositERC20(token, l1l2TokenMapping[token],
+    amount, minGasLimit, extraData)
+}
+
+async function doDeposit(contract: ethers.Contract, token: string,
+  amount: ethers.BigNumber, minGasLimit: ethers.BigNumber, 
+  extraData: string, isNative: boolean
+) {
+  if (isNative) {
+    return contract.depositETH(minGasLimit, extraData, {
+      value: amount
+    })
+  }
+  if (token === ethereumMNTAddress) {
+    return contract.depositMNT(amount, minGasLimit, extraData);
+  }
+  return contract.depositERC20(token, l1l2TokenMapping[token],
+    amount, minGasLimit, extraData, {
+      value: amount
+    });
+}
+
 
 async function withdrawETH(
   token: string,
@@ -128,14 +168,8 @@ async function withdrawETH(
   // // submit proof
   // // claim
 
-}
-
-function readTransactionReceipts() {
-  return readFile(transactionReceiptFile);
-}
-
-function readTransactionResponse() {
-  return readFile(transactionResponseFile);
+  // L2StandardBridge -> L2CrossDomainMessenger
+  // OptimismPortalProxy -> L1CrossDomainMessengerProxy -> L1StandardBridgeProxy 
 }
 
 
@@ -162,43 +196,10 @@ async function reportBalance(walletEthereum: ethers.Wallet, walletMantle: ethers
   console.log("Mantle Testnet Wallet Balance (ETH):", ethers.utils.formatEther(l2Balance));
 }
 
-function writeToFile(path: string, data: string) {
-  const options: fs.WriteFileOptions = { encoding: 'utf8' };
-  fs.writeFileSync(path, data, options);
-}
 
-function readFile(path: string) {
-  const data = fs.readFileSync(path, { encoding: 'utf8' })
-  if (data.length === 0) {
-    return [];
-  }
-  return JSON.parse(data);
-}
 
 if (require.main === module) {
   console.log('hello world');
-  startDeposit(ethereumMNTAddress, ethers.utils.parseEther("1"));
+  // startDeposit(ethereumMNTAddress, ethers.utils.parseEther("1"));
+  startDeposit(ethereumETHAddress, ethers.utils.parseEther("0.001"));
 }
-
-// mainnet: https://1rpc.io/eth
-const ethereum = '0x1';
-// https://ethereum-sepolia-rpc.publicnode.com,
-// WETH 0xEB590e5A96CD0E943A0899412E4fB06e0B362a7f, 18 decimal
-// sepoliaMNT or MNT 0x65e37B558F64E2Be5768DB46DF22F93d85741A9E, 18 decimal
-const ethereumSepolia = '0xaa36a7'; // 11155111
-// https://1rpc.io/mantle
-
-const mantle = '0x1388';
-
-// https://endpoints.omniatech.io/v1/mantle/sepolia/public
-// WETH 0xEB590e5A96CD0E943A0899412E4fB06e0B362a7f, 18 decimal
-// WETH correct 0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111
-// MNT 0x81cca157f2ec0d65cc4d435e53062beda6107d1e, 18 decimal
-// wrapped MNT 0x19f5557E23e9914A18239990f6C70D68FDF0deD5
-const mantleSepolia = '0x138b'; // 5003
-
-// ethereum to mantle: eth -> weth
-// mantle to ethereum: mnt -> mnt
-
-// ethereum sepolia to mantle sepolia: sepoliaETH -> WETH?
-// mantle sepolia to ethereum sepolia: sepoliaMNT -> MNT?
