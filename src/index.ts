@@ -4,6 +4,8 @@ import * as dotenv from "dotenv";
 import erc20abi from '../abi/erc20abi.json';
 import l1bridgeAbi from '../abi/l1bridge-abi.json';
 import l2bridgeAbi from '../abi/l2bridge-abi.json';
+import l2ToL1MessagePasserAbi from '../abi/l2tol1-message-passer-abi.json';
+import bvmEthAbi from '../abi/bvm-eth-abi.json';
 
 dotenv.config();
 
@@ -27,7 +29,8 @@ const ENV = process.env.ENV as keyof typeof config;
 const conf = config[ENV];
 const {
   mantleETHAddress, mantleMNTAddress, ethereumMNTAddress, ethereumETHAddress,
-  l1BridgeAddress, l2BridgeAddress, ethereumChainId, mantleChainId
+  l1BridgeAddress, l2BridgeAddress, l2ToL1MessagePasserAddress,
+  l2CrossDomainMessengerAddress, bvmEthAddress, ethereumChainId, mantleChainId
 } = conf;
 
 const l1l2TokenMapping: {[key: string]: string} = {
@@ -66,12 +69,12 @@ async function startDeposit(token: string, amount: ethers.BigNumber) {
   l2Contract.on(ethDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
     console.log("ETH deposit Finalized Event:");
     console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
-      amount: ${ethers.utils.formatEther(ethers.BigNumber.from(amount))}, extraData: ${extraData}`);
+      amount: ${ethers.utils.formatEther(amount)}, extraData: ${extraData}`);
   });
   l2Contract.on(mntDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
     console.log("MNT deposit Finalized Event:");
     console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
-      amount: ${ethers.utils.formatEther(ethers.BigNumber.from(amount))}, extraData: ${extraData}`);
+      amount: ${ethers.utils.formatEther(amount)}, extraData: ${extraData}`);
   });
 
   const isNative = token === ethereumETHAddress;
@@ -150,25 +153,60 @@ async function doDeposit(contract: ethers.Contract, token: string,
 
 async function withdrawETH(
   token: string,
-  amount: ethers.BigNumber,
-  walletEthereum: ethers.Wallet,
-  walletMantle: ethers.Wallet
+  amount: ethers.BigNumber
 ) {
-  // console.log("Withdraw ETH");
-  // await reportBalance(walletEthereum, walletMantle);
+  console.log(`Withdraw ${amount}`);
+  await reportBalance(walletEthereum, walletMantle);
 
-  // const l2Contract = new ethers.Contract(l2BridgeAddress, l2bridgeAbi, walletMantle);
-  // const approve = await l2Contract.approve(l2BridgeAddress, amount);
-  // console.log(`approving ${ethers.utils.formatEther(amount)}`)
-  // const approveTx = await approve.wait();
-  // console.log('approved');
+  
+  const bvmEthContract = new ethers.Contract(bvmEthAddress, bvmEthAbi, walletMantle);
 
-  // const withdraw = await l2Contract.withdraw()
-  // // wait for proof to be finalised on l1
-  // // submit proof
-  // // claim
+  const allowance: ethers.BigNumber = await bvmEthContract.allowance(SENDER_ADDRESS, l2BridgeAddress);
+  console.log(`get allowance ${ethers.utils.formatEther(allowance)}`);
 
-  // L2StandardBridge -> L2CrossDomainMessenger
+
+  if (allowance < amount) {
+    console.log(`allowance is less than amount`);
+
+    const approve: ethers.providers.TransactionResponse = await bvmEthContract.approve(l2BridgeAddress, amount);
+    console.log(`approving ${ethers.utils.formatEther(amount)}`)
+    console.log(approve);
+    const approveTx: ethers.providers.TransactionReceipt = await approve.wait();
+    console.log(`transaction mined, status: ${approveTx.status}, transaction gas limit: ${approve.gasLimit}, gas used: ${approveTx.gasUsed}`);
+    console.log(approveTx);
+  }
+
+  const extraData = '0x';
+  const minGasLimit = ethers.BigNumber.from(200000);
+  const l2Contract = new ethers.Contract(l2BridgeAddress, l2bridgeAbi, walletMantle);
+  const gasEstimate = await l2Contract.estimateGas.withdraw(token, amount, minGasLimit, extraData);
+  console.log(`gas estimate: ${gasEstimate}`);
+
+  const withdraw: ethers.providers.TransactionResponse = await l2Contract.withdraw(token, amount, minGasLimit, extraData);
+  console.log('withdraw initiated')
+  console.log(withdraw);
+  const withdrawTx: ethers.providers.TransactionReceipt = await withdraw.wait();
+  console.log(`transaction mined, status: ${withdrawTx.status}, gas estimate: ${minGasLimit}, transaction gas limit: ${withdraw.gasLimit}, gas used: ${withdrawTx.gasUsed}`);
+  console.log(withdrawTx);
+
+  const l2ToL1MessagePasserContract = new ethers.Contract(l2ToL1MessagePasserAddress, l2ToL1MessagePasserAbi, walletMantle);
+  // how to filter
+  const withdrawalFilter = l2ToL1MessagePasserContract.filters.MessagePassed(null, l2CrossDomainMessengerAddress);
+  console.log('Listening to L2 withdrawal event')
+  l2ToL1MessagePasserContract.on(withdrawalFilter, (nonce, sender, target, mntValue, ethValue, gasLimit, data, withdrawalHash) => {
+    console.log("Withdrawal initiated event");
+    console.log(`nonce: ${nonce}, sender: ${sender}, target: ${target}, 
+      mntValue: ${ethers.utils.formatEther(mntValue)}, ethValue: ${ethers.utils.formatEther(ethValue)},
+      gasLimit: ${gasLimit}, data: ${data}, withdrawalHash: ${withdrawalHash}`);
+
+      // L1CrossDomainMessengerProxy.relayMessage
+      // prove withdrawal on L1 OptimismPortalProxy.proveWithdrawalTransaction
+      // TODO: how to get the proof?
+
+      // claim finalizeWithdrawalTransaction
+  });
+
+  // L2StandardBridge -> L2CrossDomainMessenger -> L2L1MessagePasser
   // OptimismPortalProxy -> L1CrossDomainMessengerProxy -> L1StandardBridgeProxy 
 }
 
@@ -201,5 +239,6 @@ async function reportBalance(walletEthereum: ethers.Wallet, walletMantle: ethers
 if (require.main === module) {
   console.log('hello world');
   // startDeposit(ethereumMNTAddress, ethers.utils.parseEther("1"));
-  startDeposit(ethereumETHAddress, ethers.utils.parseEther("0.001"));
+  // startDeposit(ethereumETHAddress, ethers.utils.parseEther("0.001"));
+  withdrawETH(mantleETHAddress, ethers.utils.parseEther('0.001'));
 }

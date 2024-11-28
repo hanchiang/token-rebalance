@@ -1,6 +1,5 @@
 [
     "event DepositFinalized(address indexed l1Token, address indexed l2Token, address indexed from, address to, uint256 amount, bytes extraData)",
-    "function withdraw(address _l2Token, uint256 _amount, uint32 _minGasLimit, bytes calldata _extraData)",
-    "function withdrawTo(address _l2Token, address _to, uint256 _amount, uint32 _minGasLimit, bytes calldata _extraData)",
-    "function approve(address spender, uint256 amount) public returns (bool)"
+    "function withdraw(address _l2Token, uint256 _amount, uint32 _minGasLimit, bytes calldata _extraData) external payable",
+    "function withdrawTo(address _l2Token, address _to, uint256 _amount, uint32 _minGasLimit, bytes calldata _extraData) external payable"
 ]
