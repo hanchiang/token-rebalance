@@ -2,6 +2,8 @@ FROM node:22 as base
 
 WORKDIR /home/node/app
 
+EXPOSE 3000
+
 COPY package.json ./
 
 RUN npm i

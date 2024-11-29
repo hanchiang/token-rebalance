@@ -1,5 +1,4 @@
-import * as dotenv from "dotenv";
-import { BridgeRequest, BridgeDirection } from './types';
+import { BridgeDirection } from './types';
 import { supportedL1Tokens, supportedL2Tokens } from './config';
 import { ethers } from "ethers";
 
@@ -21,8 +20,4 @@ export const validateAmount = (amount: number): ethers.BigNumber | null => {
         console.log(error);
         return null;
     }
-}
-
-export const validateEnoughBalance = (amount: ethers.BigNumber) => {
-    
 }

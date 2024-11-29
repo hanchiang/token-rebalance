@@ -4,7 +4,6 @@ import l1bridgeAbi from './abi/l1bridge-abi.json';
 import l2bridgeAbi from './abi/l2bridge-abi.json';
 import l2ToL1MessagePasserAbi from './abi/l2tol1-message-passer-abi.json';
 import bvmEthAbi from './abi/bvm-eth-abi.json';
-import { CrossChainMessenger } from '@mantleio/sdk';
 import { mantleETHAddress, mantleMNTAddress, ethereumMNTAddress, ethereumETHAddress,
     l1BridgeAddress, l2BridgeAddress, l2ToL1MessagePasserAddress,
     l2CrossDomainMessengerAddress, bvmEthAddress, ethereumChainId, mantleChainId,
@@ -31,12 +30,6 @@ const {
   const walletEthereum = new ethers.Wallet(PRIVATE_KEY!, providerEthereum);
   const walletMantle = new ethers.Wallet(PRIVATE_KEY!, providerMantle);
   
-  const crossChainMessenger =  new CrossChainMessenger({
-    l1SignerOrProvider: walletEthereum,
-    l2SignerOrProvider: walletMantle,
-    l1ChainId: ethereumChainId,
-    l2ChainId: mantleChainId
-  });
 
 export async function deposit(tokenAddress: string, amount: ethers.BigNumber, toAddress: string): Promise<ethers.providers.TransactionResponse> {
 
@@ -141,9 +134,7 @@ export async function deposit(tokenAddress: string, amount: ethers.BigNumber, to
     amount: ethers.BigNumber
   ) {
     console.log(`Withdraw ${amount}`);
-    // await reportBalance(walletEthereum, walletMantle);
   
-    
     const bvmEthContract = new ethers.Contract(bvmEthAddress, bvmEthAbi, walletMantle);
   
     const allowance: ethers.BigNumber = await bvmEthContract.allowance(SENDER_ADDRESS, l2BridgeAddress);
@@ -195,26 +186,6 @@ export async function deposit(tokenAddress: string, amount: ethers.BigNumber, to
         // TODO: how to get the proof?
   
         // claim finalizeWithdrawalTransaction
-  
-        crossChainMessenger.getMessageProof(withdrawTx.transactionHash)
-          .then(proof => {
-            console.log(`proof`);
-            console.log(proof);
-  
-            crossChainMessenger.proveMessage(withdrawTx.transactionHash)
-            .then(res => {
-              console.log('prove message');
-              console.log(res);
-  
-            }).catch(error => {
-              console.log('error proving message');
-              console.log(error);
-            })
-          })
-          .catch(error => {
-            console.log('error getting message proof')
-            console.log(error);
-          })
     });
   
     // L2StandardBridge -> L2CrossDomainMessenger -> L2L1MessagePasser

@@ -22,7 +22,6 @@
     "typescript": "^4.1.3"
   },
   "dependencies": {
-    "@mantleio/sdk": "^1.0.4",
     "dotenv": "^16.4.5",
     "ethers": "^5.7.2",
     "express": "^4.21.1",

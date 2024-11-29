@@ -39,11 +39,10 @@ export class DepositChecker {
         const ethDepositFilter = this.l2contract.filters.DepositFinalized();
         console.log('listen to deposit finalise event')
         this.l2contract.on(ethDepositFilter, (_l1Token, _l2Token, _from, _to, _amount, _extraData) => {
-            // console.log("ETH deposit Finalized Event:");
-            console.log(`l1Token: ${_l1Token}, l2Token: ${_l2Token}, from: ${_from}, to: ${_to},
-              amount: ${ethers.utils.formatEther(_amount)}, extraData: ${_extraData}, amount equal: ${_amount.eq(amount)},
-              _from == from: ${_from == from}, _to == to: ${_to == to}, _l1Token == l1Token: ${_l1Token == l1Token}, 
-              _l2Token == l2Token: ${_l2Token == l2Token}`);
+            // console.log(`l1Token: ${_l1Token}, l2Token: ${_l2Token}, from: ${_from}, to: ${_to},
+            //   amount: ${ethers.utils.formatEther(_amount)}, extraData: ${_extraData}, amount equal: ${_amount.eq(amount)},
+            //   _from == from: ${_from == from}, _to == to: ${_to == to}, _l1Token == l1Token: ${_l1Token == l1Token}, 
+            //   _l2Token == l2Token: ${_l2Token == l2Token}`);
             if (_from == from && _to == to && _l1Token == l1Token && _amount.eq(amount)) {
                 console.log(`tx: ${tx} deposit is finalised`)
                 this.eventEmitter.emit('depositFinalised', tx);
@@ -72,6 +71,7 @@ export class DepositChecker {
                 console.log(error);
             }
         }
+        console.log(`gas limit: ${response.gasLimit}, gas used: ${receipt?.gasUsed}`);
 
         // update status
         const statement = getDb().prepare('SELECT * FROM transaction_detail where tx = ?')

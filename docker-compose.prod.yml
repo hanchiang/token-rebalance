@@ -4,4 +4,7 @@ services:
   backend:
     build:
       target: production
+    ports:
+      - '3000:3000'
     command: node build/index.js
+    

@@ -1,11 +1,14 @@
+# Introduction
+Rebalance token between ethereum and mantle, persist transaction detail in sqlite
+
 # set up .env
 ```
 ETHEREUM_RPC_URL=
 MANTLE_RPC_URL=
 PRIVATE_KEY=
 SENDER_ADDRESS=
-ENV=
-PORT=
+ENV=testnet|mainnet
+PORT=3000
 ```
 
 # Start app
