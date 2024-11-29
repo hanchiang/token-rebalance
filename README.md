@@ -13,6 +13,7 @@ PORT=3000
 
 # Start app
 dev: `docker compose up -d`
+
 prod: `docker compose -f docker-compose.prod.yml up -d`
 
 ## Bridge ETH from ethereum to mantle
