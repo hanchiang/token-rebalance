@@ -1,5 +1,7 @@
 import * as dotenv from "dotenv";
 import { BridgeDirection } from './types'
+import { ethers } from 'ethers';
+import l2bridgeAbi from './abi/l2bridge-abi.json';
 dotenv.config();
 
 export const config = {
@@ -66,3 +68,16 @@ const conf = config[ENV];
 
 export const supportedL1Tokens = ['ETH', 'MNT'];
 export const supportedL2Tokens = ['ETH', 'MNT'];
+
+export const {
+  ETHEREUM_RPC_URL,
+  MANTLE_RPC_URL,
+  PRIVATE_KEY,
+  SENDER_ADDRESS,
+} = process.env;
+
+export const providerEthereum = new ethers.providers.JsonRpcProvider(ETHEREUM_RPC_URL);
+export const providerMantle = new ethers.providers.JsonRpcProvider(MANTLE_RPC_URL);
+export const walletEthereum = new ethers.Wallet(PRIVATE_KEY!, providerEthereum);
+export const walletMantle = new ethers.Wallet(PRIVATE_KEY!, providerMantle);
+export const l2Contract = new ethers.Contract(l2BridgeAddress, l2bridgeAbi, walletMantle);

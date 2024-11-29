@@ -1,9 +1,9 @@
 import { ethers } from "ethers";
-import erc20abi from '../abi/erc20abi.json';
-import l1bridgeAbi from '../abi/l1bridge-abi.json';
-import l2bridgeAbi from '../abi/l2bridge-abi.json';
-import l2ToL1MessagePasserAbi from '../abi/l2tol1-message-passer-abi.json';
-import bvmEthAbi from '../abi/bvm-eth-abi.json';
+import erc20abi from './abi/erc20abi.json';
+import l1bridgeAbi from './abi/l1bridge-abi.json';
+import l2bridgeAbi from './abi/l2bridge-abi.json';
+import l2ToL1MessagePasserAbi from './abi/l2tol1-message-passer-abi.json';
+import bvmEthAbi from './abi/bvm-eth-abi.json';
 import { CrossChainMessenger } from '@mantleio/sdk';
 import { mantleETHAddress, mantleMNTAddress, ethereumMNTAddress, ethereumETHAddress,
     l1BridgeAddress, l2BridgeAddress, l2ToL1MessagePasserAddress,
@@ -13,6 +13,9 @@ import { mantleETHAddress, mantleMNTAddress, ethereumMNTAddress, ethereumETHAddr
 import * as dotenv from "dotenv";
 import { BridgeDirection } from "./types";
 import { InsufficientBalanceError, GasLimitTooLowError } from './exception';
+import { DepositChecker } from './deposit-checker';
+import { getDb, TransactionDetail } from './db';
+import sqlite3 from 'sqlite3';
 dotenv.config();
 
 const {
@@ -20,7 +23,6 @@ const {
     MANTLE_RPC_URL,
     PRIVATE_KEY,
     SENDER_ADDRESS,
-    RECEIVER_ADDRESS,
   } = process.env;
   
   
@@ -36,98 +38,103 @@ const {
     l2ChainId: mantleChainId
   });
 
+export async function deposit(tokenAddress: string, amount: ethers.BigNumber, toAddress: string): Promise<ethers.providers.TransactionResponse> {
 
-export async function deposit(symbol: string, amount: ethers.BigNumber): Promise<ethers.providers.TransactionReceipt> {
-    const tokenAddress = symbolToAddress[BridgeDirection.L1_TO_L2][symbol];
-
-    console.log(tokenAddress);
     const balance = await getBalance(tokenAddress, amount, BridgeDirection.L1_TO_L2);
-    console.log(`Deposit ${amount} ${symbol}, balance: ${balance}`);
+    console.log(`Deposit ${amount} ${tokenAddress}, balance: ${balance}, to: ${toAddress}`);
     if (balance?.lt(amount)) {
         throw new InsufficientBalanceError(`Trying to deposit ${ethers.utils.formatEther(amount)}, but balance is ${ethers.utils.formatEther(balance)}`, balance, amount);
     }
-  
-    const l2Contract = new ethers.Contract(l2BridgeAddress, l2bridgeAbi, walletMantle);
-    const ethDepositFilter = l2Contract.filters.DepositFinalized(ethereumETHAddress, null, SENDER_ADDRESS);
-    const mntDepositFilter = l2Contract.filters.DepositFinalized(ethereumMNTAddress, null, SENDER_ADDRESS);
-  
-    console.log("Listening for DepositFinalized events on the L2 Bridge...");
-    // Listen for deposit finalized
-    l2Contract.on(ethDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
-      console.log("ETH deposit Finalized Event:");
-      console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
-        amount: ${ethers.utils.formatEther(amount)}, extraData: ${extraData}`);
-    });
-    l2Contract.on(mntDepositFilter, (l1Token, l2Token, from, to, amount, extraData) => {
-      console.log("MNT deposit Finalized Event:");
-      console.log(`l1Token: ${l1Token}, l2Token: ${l2Token}, from: ${from}, to: ${to},
-        amount: ${ethers.utils.formatEther(amount)}, extraData: ${extraData}`);
-    });
-  
+
+
     const isNative = tokenAddress === ethereumETHAddress;
     console.log(`Depositing ${ethers.utils.formatEther(amount)} ${addressToSymbol[tokenAddress]}, isNative: ${isNative}`)
   
     // await reportBalance(walletEthereum, walletMantle);
   
     const l1Contract = new ethers.Contract(l1BridgeAddress, l1bridgeAbi, walletEthereum);
-    const minGasLimit = ethers.BigNumber.from(200000);
+    const minGasLimit = ethers.BigNumber.from(300000);
     const extraData = '0x';
-    const gasEstimate = await estimateGas(l1Contract, tokenAddress, amount, minGasLimit, extraData, isNative);
+    const gasEstimate = await estimateGas(l1Contract, tokenAddress, amount, minGasLimit, extraData, isNative, toAddress);
     console.log(`gas estimate: ${gasEstimate}`);
   
     // L1StandardBridgeProxy -> L1CrossDomainMessengerProxy -> OptimismPortalProxy
     // L2CrossDomainMessenger
-    const response: ethers.providers.TransactionResponse = await doDeposit(l1Contract, tokenAddress, amount, gasEstimate, extraData, isNative);
-    console.log(response);
-    console.log(`transaction submitted, gas limit: ${response.gasLimit}`);
-  
-    const receipt = await response.wait();
-    console.log(receipt);
-    console.log(`transaction mined, status: ${receipt.status}, gas estimate: ${gasEstimate}, transaction gas limit: ${response.gasLimit}, gas used: ${receipt.gasUsed}`);
-  
-    if (receipt.gasUsed.gt(response.gasLimit)) {
-        throw new GasLimitTooLowError(`Gas limit too low, gas limit: ${response.gasLimit}, gas used: ${receipt.gasUsed}`, 
-            response.gasLimit, receipt.gasUsed);
-    }
+    const response: ethers.providers.TransactionResponse = await doDeposit(l1Contract, tokenAddress, amount, gasEstimate, extraData, isNative, toAddress);
+    const statement = getDb().prepare(`INSERT INTO transaction_detail(tx, direction, status) values(?, ?, ?)`)
+    statement.run([response.hash, BridgeDirection.L1_TO_L2, null], (res: sqlite3.RunResult, err: Error) => {
+        if (err) {
+            console.log('insert error');
+            console.log(err);
+        }
+    });
 
-    return receipt;
-  
-    // await reportBalance(walletEthereum, walletMantle);
+    console.log(response);
+    console.log(`transaction submitted, gas limit: ${response.gasLimit}`);    
+    return response;
   }
   
   async function estimateGas(contract: ethers.Contract, token: string, amount: ethers.BigNumber,
-    minGasLimit: ethers.BigNumber, extraData: string, isNative: boolean
+    minGasLimit: ethers.BigNumber, extraData: string, isNative: boolean, to: string
   ) {
     if (isNative) {
-      return contract.estimateGas.depositETH(minGasLimit, extraData, {
+      return contract.estimateGas.depositETHTo(to, minGasLimit, extraData, {
         value: amount,
       })
     }
     if (token === ethereumMNTAddress) {
-      return contract.estimateGas.depositMNT(amount, minGasLimit, extraData)
+      return contract.estimateGas.depositMNTTo(to, amount, minGasLimit, extraData)
     }
-    return contract.estimateGas.depositERC20(token, l1l2TokenMapping[token],
+    return contract.estimateGas.depositERC20To(to, token, l1l2TokenMapping[token],
       amount, minGasLimit, extraData)
   }
   
   async function doDeposit(contract: ethers.Contract, token: string,
     amount: ethers.BigNumber, minGasLimit: ethers.BigNumber, 
-    extraData: string, isNative: boolean
+    extraData: string, isNative: boolean, to: string
   ) {
     if (isNative) {
-      return contract.depositETH(minGasLimit, extraData, {
+      return contract.depositETHTo(to, minGasLimit, extraData, {
         value: amount
       })
     }
     if (token === ethereumMNTAddress) {
-      return contract.depositMNT(amount, minGasLimit, extraData);
+      return contract.depositMNTTo(to, amount, minGasLimit, extraData);
     }
-    return contract.depositERC20(token, l1l2TokenMapping[token],
+    return contract.depositERC20To(to, token, l1l2TokenMapping[token],
       amount, minGasLimit, extraData, {
         value: amount
       });
   }
   
+  export async function listenToDepositFinalise(l1Token: string, to: string, amount: ethers.BigNumber, tx: string) {
+    const depositChecker = DepositChecker.getInstance();
+    depositChecker.waitForTransactionMined(tx);
+    depositChecker.listenToDepositFinalise(l1Token, l1l2TokenMapping[l1Token], SENDER_ADDRESS!, to, amount, tx);
+  }
+
+  export async function getTx(tx: string): Promise<ethers.providers.TransactionReceipt> {
+    const depositChecker = DepositChecker.getInstance();
+    const receipt = await depositChecker.waitForTransactionMined(tx);
+    const statement = getDb().prepare('SELECT * FROM transaction_detail where tx = ?')
+    try {
+        const transactionDetail: TransactionDetail = await new Promise((resolve, reject) => {
+            statement.get([tx], (err: Error, res: TransactionDetail) => {
+                console.log(err, res)
+                if (err) {
+                    reject(err);
+                }
+                resolve(res);
+            });
+        }) 
+        receipt.status = transactionDetail?.status;
+        return receipt;
+    } catch(error) {
+        console.log('query transaction detail error');
+        console.log(error);
+        return receipt;
+    }
+  }
   
   export async function withdrawETH(
     token: string,
@@ -199,7 +206,6 @@ export async function deposit(symbol: string, amount: ethers.BigNumber): Promise
               console.log('prove message');
               console.log(res);
   
-              // crossChainMessenger.getChallengePeriodSeconds()
             }).catch(error => {
               console.log('error proving message');
               console.log(error);
@@ -262,5 +268,5 @@ if (require.main === module) {
     console.log('hello world');
     // deposit(ethereumMNTAddress, ethers.utils.parseEther("1"));
     // deposit(ethereumETHAddress, ethers.utils.parseEther("0.001"));
-    withdrawETH(mantleETHAddress, ethers.utils.parseEther('0.001'));
+    // withdrawETH(mantleETHAddress, ethers.utils.parseEther('0.001'));
   }
