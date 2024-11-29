@@ -1,4 +1,4 @@
-FROM node:14 as base
+FROM node:22 as base
 
 WORKDIR /home/node/app
 
@@ -8,8 +8,11 @@ RUN npm i
 
 COPY . .
 
+CMD [ "npm", "run", "dev" ]
+
 FROM base as production
 
 ENV NODE_PATH=./build
 
 RUN npm run build
+CMD [ "npm", "run", "start"]

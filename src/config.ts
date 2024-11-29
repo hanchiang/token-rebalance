@@ -1,3 +1,7 @@
+import * as dotenv from "dotenv";
+import { BridgeDirection } from './types'
+dotenv.config();
+
 export const config = {
     testnet: {
         mantleETHAddress: '0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111',
@@ -26,3 +30,39 @@ export const config = {
         mantleChainId: 5000
     }
 }
+
+const ENV = process.env.ENV as keyof typeof config;
+const conf = config[ENV];
+  export const {
+    mantleETHAddress, mantleMNTAddress, ethereumMNTAddress, ethereumETHAddress,
+    l1BridgeAddress, l2BridgeAddress, l2ToL1MessagePasserAddress,
+    l2CrossDomainMessengerAddress, bvmEthAddress, ethereumChainId, mantleChainId
+  } = conf;
+  
+  export const l1l2TokenMapping: {[key: string]: string} = {
+    [ethereumETHAddress]: mantleETHAddress,
+    [ethereumMNTAddress]: mantleMNTAddress
+  };
+  export const l2l1TokenMapping: {[key: string]: string} = {
+    [mantleETHAddress]: ethereumETHAddress,
+    [mantleMNTAddress]: ethereumMNTAddress
+  }
+  export const addressToSymbol: {[key: string]: string} = {
+    [ethereumETHAddress]: 'ETH',
+    [ethereumMNTAddress]: 'MNT',
+    [mantleETHAddress]: 'ETH',
+    [mantleMNTAddress]: 'MNT'
+  }
+  export const symbolToAddress: {[key in BridgeDirection]: {[key: string]: string}} = {
+    [BridgeDirection.L1_TO_L2]: {
+      ETH: ethereumETHAddress,
+      MNT: ethereumMNTAddress
+    },
+    [BridgeDirection.L2_TO_L1]: {
+      ETH: mantleETHAddress,
+      MNT: mantleMNTAddress
+    }
+  }
+
+export const supportedL1Tokens = ['ETH', 'MNT'];
+export const supportedL2Tokens = ['ETH', 'MNT'];

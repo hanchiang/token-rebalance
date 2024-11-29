@@ -1,7 +1,7 @@
 version: '3.7'
 
 services:
-  ts-node-docker:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,9 +9,10 @@ services:
     volumes:
       - ./src:/home/node/app/src
       - ./nodemon.json:/home/node/app/nodemon.json
-    container_name: ts-node-docker
+    container_name: backend
+    env_file: .env
     expose:
-      - '4000'
+      - '3000'
     ports:
-      - '4000:4000'
+      - '3000:3000'
     command: npm run dev

@@ -1,18 +1,28 @@
-import fs from 'fs';
-import path from 'path';
+import * as dotenv from "dotenv";
+import { BridgeRequest, BridgeDirection } from './types';
+import { supportedL1Tokens, supportedL2Tokens } from './config';
+import { ethers } from "ethers";
 
-const transactionResponseFile = path.join(__dirname, '..', 'example', 'transaction_response.json');
-const transactionReceiptFile = path.join(__dirname, '..', 'example', 'transaction_receipt.json');
-
-function writeToFile(path: string, data: string) {
-    const options: fs.WriteFileOptions = { encoding: 'utf8' };
-    fs.writeFileSync(path, data, options);
+export const isValidTokenTransfer = (token: string, direction: BridgeDirection): boolean => {
+    token = token.toUpperCase();
+    if (direction == BridgeDirection.L1_TO_L2) {
+        return supportedL1Tokens.includes(token);
+    }
+    if (direction == BridgeDirection.L2_TO_L1) {
+        return supportedL2Tokens.includes(token);
+    }
+    return false;
   }
-  
-function readFile(path: string) {
-const data = fs.readFileSync(path, { encoding: 'utf8' })
-if (data.length === 0) {
-    return [];
+
+export const validateAmount = (amount: number): ethers.BigNumber | null => {
+    try {
+        return ethers.utils.parseEther(amount.toString());
+    } catch(error) {
+        console.log(error);
+        return null;
+    }
 }
-return JSON.parse(data);
+
+export const validateEnoughBalance = (amount: ethers.BigNumber) => {
+    
 }
