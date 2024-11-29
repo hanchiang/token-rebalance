@@ -2,3 +2,4 @@ node_modules
 build
 .env
 example
+src/db/db.sqlite
